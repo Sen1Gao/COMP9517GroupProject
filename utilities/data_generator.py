@@ -9,7 +9,9 @@ from pathlib import Path
 import random
 
 class DataGenerator:
-    
+    """
+    This class is designed for sampling data from given dataset in a uniform distributed way
+    """
     def __init__(self):
         self.root_dir=None
         self.dataset_rate=None
@@ -17,6 +19,18 @@ class DataGenerator:
         self.split_rate=None
     
     def set_parameters(self,root_dir:str,dataset_rate:float,random_seed_number:int,split_rate:tuple):
+        """
+        Parameters
+        ----------
+        root_dir : str
+            The root path of dataset.
+        dataset_rate : float
+            What proportion of dataset you want to be used data.
+        random_seed_number : int
+            Random seed is used to ensure that the generated data are same every time.
+        split_rate : tuple
+            To split training data, validation data and test data. Example: (0.7,0.1,0.2) -> (training data, validation data, test data)
+        """
         if Path(root_dir).exists() is False:
             raise Exception("Directory is not existing, please check your input")
         self.root_dir=root_dir
@@ -29,11 +43,29 @@ class DataGenerator:
         self.split_rate=split_rate
         
     def generate_used_data_path(self)->tuple:
+        """
+        File path structure must be as following 
+        
+        WildScenes2d
+        ├── V-01
+        │   ├── image
+        │   └── indexLabel
+        ├── ...
+        │   └── ...
+        └── ...
+            └── ...
+        
+        Returns
+        -------
+        tuple
+            Return generated data which include uniform distributed data path with image and index label.
+
+        """
         random.seed(self.random_seed_number)
+        sub_folders_dir=self.__search_sub_folders__(self.root_dir)
         training_data_path=[]
         validation_data_path=[]
         test_data_path=[]
-        sub_folders_dir=self.__search_sub_folders__(self.root_dir)
         for folder_dir in sub_folders_dir:
             new_folder_dir=f"{folder_dir}/image"
             if Path(new_folder_dir).exists() is True:
