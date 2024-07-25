@@ -28,13 +28,14 @@ split_test_image_list=test_image_list[::intrval]
 
 #If you want to check distributions of split images, set this variable to True
 distribution_display=False
+dataset_dir=f"C:/Users/JARVIS/Documents/Projects"
 if distribution_display is True:
     combined_split_image_list=[split_train_image_list,split_val_image_list,split_test_image_list]
     class_distribution=[]
     for image_list in combined_split_image_list:
         new_label_list=[]
         for image_path in image_list:
-            new_label_path=f"C:/Users/JARVIS/Documents/Projects/{image_path.replace('image','newIndexLabel')}"
+            new_label_path=f"{dataset_dir}/{image_path.replace('image','newIndexLabel')}"
             new_label=cv2.imread(new_label_path,cv2.IMREAD_UNCHANGED)
             new_label_list.append(new_label)
         distribution = np.sum(np.vstack([np.sum(a == c) for c in range(16)] for a in new_label_list), axis=0)
