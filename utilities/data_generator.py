@@ -55,7 +55,8 @@ if distribution_display is True:
     plt.legend(loc='best')
     plt.show()
 
-new_dataset_path=f"{dataset_dir}/CustomWildScenes2d"
+custom_folder_name="CustomWildScenes2d"
+new_dataset_path=f"{dataset_dir}/{custom_folder_name}"
 new_dataset_dir=Path(new_dataset_path)
 if new_dataset_dir.exists() is True:
     shutil.rmtree(new_dataset_dir.as_posix())
