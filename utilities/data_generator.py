@@ -6,6 +6,7 @@ Created on Wed Jul 24 23:10:41 2024
 """
 
 import numpy as np
+import random
 import cv2
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -15,99 +16,93 @@ import shutil
 This file is to generate the split dataset which has a uniform class distribution
 """
 
-dataset_dir=f"C:/Users/JARVIS/Documents/Projects"
-#Your own csv files folder path
-csv_file_folder_path="../WildScenes-main/data/splits/opt2d"
+def init_custom_dataset_folder(dataset_path,custom_folder_name):
+    custom_folder_path=Path(f"{dataset_path}/../{custom_folder_name}")
+    if custom_folder_path.exists() is True:
+        shutil.rmtree(custom_folder_path.as_posix())
+    custom_folder_path.mkdir()
+    for item in ['train','val','test']:
+        Path(f"{custom_folder_path.as_posix()}/{item}").mkdir()
+        Path(f"{custom_folder_path.as_posix()}/{item}/image").mkdir()
+        Path(f"{custom_folder_path.as_posix()}/{item}/newIndexLabel").mkdir()
 
-train_image_list=np.genfromtxt(f"{csv_file_folder_path}/train.csv",dtype=str,delimiter=",",skip_header=1,usecols=(1))
-val_image_list=np.genfromtxt(f"{csv_file_folder_path}/val.csv",dtype=str,delimiter=",",skip_header=1,usecols=(1))
-test_image_list=np.genfromtxt(f"{csv_file_folder_path}/test.csv",dtype=str,delimiter=",",skip_header=1,usecols=(1))
+def get_image_path_list(dataset_path,csv_file_name,intrval):
+    image_path_list=np.genfromtxt(f"{dataset_path}/{csv_file_name}.csv",dtype=str,delimiter=",",skip_header=1,usecols=(1))
+    sampled_image_path_list=[]
+    for start in range(0,len(image_path_list),intrval):
+        end=min(start+intrval,len(image_path_list))
+        index=random.randint(start, end-1)
+        sampled_image_path_list.append(image_path_list[index])
+    return sampled_image_path_list
 
-#Uses this variable to sample image with interval referred by yourself
+def copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_image_path_list,folder_name):
+    for path in sampled_image_path_list:
+        src_image_path=Path(f"{dataset_path}/../{path}")
+        image_name=src_image_path.name
+        dest_image_path=f"{dataset_path}/../{custom_folder_name}/{folder_name}/image/{image_name}"
+        shutil.copy(src_image_path.as_posix(), dest_image_path)
+        src_label_path=Path(src_image_path.as_posix().replace("image", "newIndexLabel"))
+        label_name=src_label_path.name
+        dest_label_path=f"{dataset_path}/../{custom_folder_name}/{folder_name}/newIndexLabel/{label_name}"
+        shutil.copy(src_label_path.as_posix(), dest_label_path)
+
+def calculate_class_distribution(dataset_path,custom_folder_name,folder_name,class_num):
+    new_index_label_folder_path=Path(f"{dataset_path}/../{custom_folder_name}/{folder_name}/newIndexLabel")
+    new_label_list=[]
+    for item in new_index_label_folder_path.iterdir():
+        new_label=cv2.imread(item.as_posix(),cv2.IMREAD_UNCHANGED)
+        new_label_list.append(new_label)
+    all_pixel_class_num=[]
+    for label in new_label_list:
+        each_pixel_class_num=[]
+        for i in range(class_num):
+            each_pixel_class_num.append(np.sum(label == i))
+        each_pixel_class_num=np.array(each_pixel_class_num)
+        all_pixel_class_num.append(each_pixel_class_num)
+    stack=np.vstack(all_pixel_class_num)
+    distribution=np.sum(stack,axis=0)
+    return distribution
+    
+dataset_path=f"C:/Users/JARVIS/Documents/Projects/WildScenes2d"
+custom_folder_name="CustomWildScenes2d"
+
+init_custom_dataset_folder(dataset_path,custom_folder_name)
+
 intrval=9
-split_train_image_list=train_image_list[::intrval]
-split_val_image_list=val_image_list[::intrval]
-split_test_image_list=test_image_list[::intrval]
+sampled_train_image_path_list=get_image_path_list(dataset_path,'train',intrval)
+sampled_val_image_path_list=get_image_path_list(dataset_path,'val',intrval)
+sampled_test_image_path_list=get_image_path_list(dataset_path,'test',intrval)
 
-#If you want to check distributions of split images, set this variable to True
-distribution_display=False
-if distribution_display is True:
-    combined_split_image_list=[split_train_image_list,split_val_image_list,split_test_image_list]
-    class_distribution=[]
-    for image_list in combined_split_image_list:
-        new_label_list=[]
-        for image_path in image_list:
-            new_label_path=f"{dataset_dir}/{image_path.replace('image','newIndexLabel')}"
-            new_label=cv2.imread(new_label_path,cv2.IMREAD_UNCHANGED)
-            new_label_list.append(new_label)
-        distribution = np.sum(np.vstack([np.sum(a == c) for c in range(16)] for a in new_label_list), axis=0)
-        class_distribution.append(distribution)
-    x=np.arange(0,16,1)
-    fig = plt.figure(figsize=(10, 10))
-    plt.subplot(2,2,1)
-    plt.plot(x, class_distribution[0], color='blue', label='train')
+copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_train_image_path_list,'train')
+copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_val_image_path_list,'val')
+copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_test_image_path_list,'test')
+
+#Saves paths of smapled images to where you refer to
+np.save(f"{dataset_path}/../{custom_folder_name}/sampled_train_image_path_list.npy",sampled_train_image_path_list)
+np.save(f"{dataset_path}/../{custom_folder_name}/sampled_val_image_path_list.npy",sampled_val_image_path_list)
+np.save(f"{dataset_path}/../{custom_folder_name}/sampled_test_image_path_list.npy",sampled_test_image_path_list)
+
+#If you want to check distributions of sampled images, set this variable to True
+is_show=True
+if is_show is True:
+    class_num=16
+    train_distribution=calculate_class_distribution(dataset_path,custom_folder_name,'train',class_num)
+    val_distribution=calculate_class_distribution(dataset_path,custom_folder_name,'val',class_num)
+    test_distribution=calculate_class_distribution(dataset_path,custom_folder_name,'test',class_num)
+    x=np.arange(0,class_num,1)
+    fig = plt.figure(figsize=(10, 5))
+    plt.subplot(1,3,1)
+    plt.plot(x, train_distribution, color='blue', label='train')
     plt.legend(loc='best')
-    plt.subplot(2,2,2)
-    plt.plot(x, class_distribution[1], color='blue', label='val')
+    plt.subplot(1,3,2)
+    plt.plot(x, val_distribution, color='blue', label='val')
     plt.legend(loc='best')
-    plt.subplot(2,2,3)
-    plt.plot(x, class_distribution[2], color='blue', label='test')
+    plt.subplot(1,3,3)
+    plt.plot(x, test_distribution, color='blue', label='test')
     plt.legend(loc='best')
     plt.show()
 
-custom_folder_name="CustomWildScenes2d"
-new_dataset_path=f"{dataset_dir}/{custom_folder_name}"
-new_dataset_dir=Path(new_dataset_path)
-if new_dataset_dir.exists() is True:
-    shutil.rmtree(new_dataset_dir.as_posix())
-new_dataset_dir.mkdir()
-Path(f"{new_dataset_path}/train").mkdir()
-Path(f"{new_dataset_path}/train/image").mkdir()
-Path(f"{new_dataset_path}/train/newIndexLabel").mkdir()
-Path(f"{new_dataset_path}/val").mkdir()
-Path(f"{new_dataset_path}/val/image").mkdir()
-Path(f"{new_dataset_path}/val/newIndexLabel").mkdir()
-Path(f"{new_dataset_path}/test").mkdir()
-Path(f"{new_dataset_path}/test/image").mkdir()
-Path(f"{new_dataset_path}/test/newIndexLabel").mkdir()
 
-
-#Saves paths of split images to where you refer to
-np.save(f"{new_dataset_path}/split_train_image_list.npy",split_train_image_list)
-np.save(f"{new_dataset_path}/split_val_image_list.npy",split_val_image_list)
-np.save(f"{new_dataset_path}/split_test_image_list.npy",split_test_image_list)
-
-for i in split_train_image_list:
-    src_image_path=Path(f"{dataset_dir}/{i}")
-    image_name=src_image_path.name
-    dest_image_path=f"{new_dataset_path}/train/image/{image_name}"
-    shutil.copy(src_image_path.as_posix(), dest_image_path)
-    src_label_path=Path(src_image_path.as_posix().replace("image", "newIndexLabel"))
-    label_name=src_label_path.name
-    dest_label_path=f"{new_dataset_path}/train/newIndexLabel/{label_name}"
-    shutil.copy(src_label_path.as_posix(), dest_label_path)
-
-for i in split_val_image_list:
-    src_image_path=Path(f"{dataset_dir}/{i}")
-    image_name=src_image_path.name
-    dest_image_path=f"{new_dataset_path}/val/image/{image_name}"
-    shutil.copy(src_image_path.as_posix(), dest_image_path)
-    src_label_path=Path(src_image_path.as_posix().replace("image", "newIndexLabel"))
-    label_name=src_label_path.name
-    dest_label_path=f"{new_dataset_path}/val/newIndexLabel/{label_name}"
-    shutil.copy(src_label_path.as_posix(), dest_label_path)
-    
-for i in split_test_image_list:
-    src_image_path=Path(f"{dataset_dir}/{i}")
-    image_name=src_image_path.name
-    dest_image_path=f"{new_dataset_path}/test/image/{image_name}"
-    shutil.copy(src_image_path.as_posix(), dest_image_path)
-    src_label_path=Path(src_image_path.as_posix().replace("image", "newIndexLabel"))
-    label_name=src_label_path.name
-    dest_label_path=f"{new_dataset_path}/test/newIndexLabel/{label_name}"
-    shutil.copy(src_label_path.as_posix(), dest_label_path)
-    
-    
     
     
     
