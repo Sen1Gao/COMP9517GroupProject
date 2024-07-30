@@ -10,6 +10,7 @@ import cv2
 import torch
 import torch.nn as nn
 from torchvision import transforms
+import matplotlib.pyplot as plt
 
 palette=[(0, 0, 0),(60, 180, 75),(255, 225, 25),(0, 130, 200),
          (145, 30, 180),(70, 240, 240),(240, 50, 230),(210, 245, 60),
@@ -23,6 +24,15 @@ def load_image_and_label(image_path,label_path,target_size):
     label=cv2.imread(label_path,cv2.IMREAD_UNCHANGED)
     label = cv2.resize(label, target_size,interpolation=cv2.INTER_NEAREST)
     return image,label
+
+def render_image(label):
+    label_color=np.zeros((label.shape[0],label.shape[1],3),dtype=np.uint8)
+    for row in range(label.shape[0]):
+        for col in range(label.shape[1]):
+            label_color[row][col][0]=palette[label[row][col]][0]
+            label_color[row][col][1]=palette[label[row][col]][1]
+            label_color[row][col][2]=palette[label[row][col]][2]
+    return label_color
 
 def calculate_IoU(pred_label, label, class_index):
     mask_pred_label = (pred_label == class_index)
@@ -48,10 +58,10 @@ class UNet(nn.Module):
             return nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
                 nn.BatchNorm2d(out_channels),
-                nn.ReLU(inplace=False)#,
-                # nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-                # nn.BatchNorm2d(out_channels),
-                # nn.ReLU(inplace=True)
+                nn.ReLU(inplace=False),
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True)
             )
 
         self.encoder1 = CBR(3, 32)
@@ -113,15 +123,13 @@ print(device)
 model_folder_path="C:/Users/JARVIS/Documents/Projects/CustomWildScenes2d"
 model_name="best_model.pth"
 
-image_path="C:/Users/JARVIS/Documents/Projects/CustomWildScenes2d/test/image/1639441424-739541605.png"
+image_path="C:/Users/JARVIS/Documents/Projects/CustomWildScenes2d/test/image/1624329385-569874078.png"
 label_path=image_path.replace("image", "newIndexLabel")
 target_size=(512,512)
 class_num=16
 try:
     model = torch.load(f"{model_folder_path}/{model_name}")
     model.eval()
-    ious_sum = [0.0]*class_num
-    miou_sum = 0.0
     with torch.no_grad():
         image,label=load_image_and_label(image_path,label_path,target_size)
         image_tensor=transform(image).unsqueeze(0)
@@ -133,7 +141,23 @@ try:
         miou,ious=calculate_mIoU(pred_np[0],label,class_num)
         print(f"mIoU:{miou}")
         print(f"IoUs:{ious}")
-        label_color=np.zeros(())
+        label_color=render_image(label)
+        pred_color=render_image(pred_np[0])
+        
+        fig = plt.figure(figsize=(15, 5))
+        plt.subplot(1, 3, 1)
+        plt.imshow(image)
+        plt.title("Image")
+        plt.axis('off')
+        plt.subplot(1, 3, 2)
+        plt.imshow(label_color)
+        plt.title("Ground Truth")
+        plt.axis('off')
+        plt.subplot(1, 3, 3)
+        plt.imshow(pred_color)
+        plt.title("Prediction")
+        plt.axis('off')
+        plt.show()
 except:
     print("Catch exception. Cleaning up...")
 finally:
