@@ -46,10 +46,8 @@ class CustomDataset(Dataset):
         label_path = f"{self.dataset_folder_path}/{self.csv_file_type}/newIndexLabel/{image_name}"
         label = cv2.imread(label_path, cv2.IMREAD_UNCHANGED)
         if self.target_size is not None:
-            image = cv2.resize(image, self.target_size,
-                               interpolation=cv2.INTER_NEAREST)
-            label = cv2.resize(label, self.target_size,
-                               interpolation=cv2.INTER_NEAREST)
+            image = cv2.resize(image, self.target_size,interpolation=cv2.INTER_NEAREST)
+            label = cv2.resize(label, self.target_size,interpolation=cv2.INTER_NEAREST)
         return image, label
 
     def pre_load_and_process(self):
@@ -104,7 +102,7 @@ class UNet(nn.Module):
             return nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
                 nn.BatchNorm2d(out_channels),
-                nn.ReLU(inplace=True),
+                nn.ReLU(inplace=False)
                 # nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
                 # nn.BatchNorm2d(out_channels),
                 # nn.ReLU(inplace=True)
@@ -183,7 +181,7 @@ optimizer = optim.Adam(model.parameters(), lr=0.01)
 is_StepLR = False
 scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
 
-batch_size = 6
+batch_size = 4
 train_loader = DataLoader(train_data, batch_size, shuffle=False)
 val_loader = DataLoader(val_data, batch_size, shuffle=False)
 test_loader = DataLoader(test_data, batch_size, shuffle=False)
@@ -258,8 +256,8 @@ try:
                 y_avg_miou = y_avg_miou[0:epoch]
                 raise KeyboardInterrupt
 
-except KeyboardInterrupt as e:
-    print(f"Catch exception {e}. Cleaning up...")
+except:
+    print("Catch exception. Cleaning up...")
 finally:
     if device.type == 'cuda':
         torch.cuda.empty_cache()
@@ -280,27 +278,35 @@ plt.legend(loc='best')
 plt.title("Average mIou")
 plt.show()
 
-
-test_loader = DataLoader(test_data, batch_size, shuffle=False)
-model = torch.load(f"{dataset_folder_path}/best_model.pth")
-model.eval()
-ious_sum = [0.0]*class_num
-miou_sum = 0.0
-with torch.no_grad():
-    for images, labels in tqdm(test_loader, desc=message, leave=False):
-        images = images.to(device)
-        labels = labels.to(device).long()
-
-        outputs = model(images)
-        probs = torch.softmax(outputs, dim=1)
-        preds = torch.argmax(probs, dim=1)
-        preds_np = preds.cpu().numpy()
-        labels_np = labels.cpu().numpy()
-        for (pred_label, label) in zip(preds_np, labels_np):
-            miou, ious = calculate_mIoU(pred_label, label, class_num)
-            miou_sum += miou
-            ious_sum=np.add(ious_sum,ious).tolist()
-avg_miou=miou_sum/test_data.__len__()
-avg_ious=(np.array(ious_sum)/test_data.__len__()).tolist()
-print(f"Average mIou of {test_data.__len__()} test images:{avg_miou}")
-print(f"Average Iou of {test_data.__len__()} test images:{avg_ious}")
+try:
+    test_loader = DataLoader(test_data, batch_size, shuffle=False)
+    model = torch.load(f"{dataset_folder_path}/best_model.pth")
+    model.eval()
+    ious_sum = [0.0]*class_num
+    miou_sum = 0.0
+    with torch.no_grad():
+        for images, labels in tqdm(test_loader, desc=message, leave=False):
+            images = images.to(device)
+            labels = labels.to(device).long()
+    
+            outputs = model(images)
+            probs = torch.softmax(outputs, dim=1)
+            preds = torch.argmax(probs, dim=1)
+            preds_np = preds.cpu().numpy()
+            labels_np = labels.cpu().numpy()
+            for (pred_label, label) in zip(preds_np, labels_np):
+                miou, ious = calculate_mIoU(pred_label, label, class_num)
+                miou_sum += miou
+                ious_sum=np.add(ious_sum,ious).tolist()
+    avg_miou=miou_sum/test_data.__len__()
+    avg_ious=(np.array(ious_sum)/test_data.__len__()).tolist()
+    print(f"Average mIou of {test_data.__len__()} test images:{avg_miou}")
+    print(f"Average Iou of {test_data.__len__()} test images:{avg_ious}")
+except:
+    print("Catch exception. Cleaning up...")
+finally:
+    if device.type == 'cuda':
+        torch.cuda.empty_cache()
+    del model,test_loader
+    gc.collect()
+    print("Cleanup complete. Exiting...")
