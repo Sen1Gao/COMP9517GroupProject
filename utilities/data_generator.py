@@ -68,7 +68,7 @@ custom_folder_name="CustomWildScenes2d"
 
 init_custom_dataset_folder(dataset_path,custom_folder_name)
 
-intrval=9
+intrval=7
 sampled_train_image_path_list=get_image_path_list(dataset_path,'train',intrval)
 sampled_val_image_path_list=get_image_path_list(dataset_path,'val',intrval)
 sampled_test_image_path_list=get_image_path_list(dataset_path,'test',intrval)
