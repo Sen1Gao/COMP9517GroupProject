@@ -67,7 +67,7 @@ dataset_path=f"C:/Users/JARVIS/Documents/Projects/WildScenes2d"
 custom_folder_name="CustomWildScenes2d"
 
 init_custom_dataset_folder(dataset_path,custom_folder_name)
-
+random.seed(0)
 intrval=7
 sampled_train_image_path_list=get_image_path_list(dataset_path,'train',intrval)
 sampled_val_image_path_list=get_image_path_list(dataset_path,'val',intrval)
@@ -83,7 +83,7 @@ np.save(f"{dataset_path}/../{custom_folder_name}/sampled_val_image_path_list.npy
 np.save(f"{dataset_path}/../{custom_folder_name}/sampled_test_image_path_list.npy",sampled_test_image_path_list)
 
 #If you want to check distributions of sampled images, set this variable to True
-is_show=True
+is_show=False
 if is_show is True:
     class_num=16
     train_distribution=calculate_class_distribution(dataset_path,custom_folder_name,'train',class_num)
