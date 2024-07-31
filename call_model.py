@@ -128,7 +128,8 @@ label_path=image_path.replace("image", "newIndexLabel")
 target_size=(512,512)
 class_num=16
 try:
-    model = torch.load(f"{model_folder_path}/{model_name}")
+    model = torch.load(f"{model_folder_path}/{model_name}") if device.type == 'cuda' else torch.load(f"{model_folder_path}/{model_name}",map_location=torch.device('cpu'))
+    model.to(device)
     model.eval()
     with torch.no_grad():
         image,label=load_image_and_label(image_path,label_path,target_size)

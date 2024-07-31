@@ -93,69 +93,13 @@ def calculate_mIoU(pred_label, label, class_num):
         ious.append(iou)
     return np.mean(np.array(ious)), ious
 
-
-class UNet(nn.Module):
+# Define your Network here
+class Your_Net(nn.Module):
     def __init__(self, class_num):
-        super(UNet, self).__init__()
-
-        def CBR(in_channels, out_channels):
-            return nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-                nn.BatchNorm2d(out_channels),
-                nn.ReLU(inplace=False)
-                # nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-                # nn.BatchNorm2d(out_channels),
-                # nn.ReLU(inplace=True)
-            )
-
-        self.encoder1 = CBR(3, 32)
-        self.encoder2 = CBR(32, 64)
-        self.encoder3 = CBR(64, 128)
-        self.encoder4 = CBR(128, 256)
-
-        self.pool = nn.MaxPool2d(2)
-
-        self.bottleneck = CBR(256, 512)
-
-        self.upconv4 = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
-        self.decoder4 = CBR(512, 256)
-
-        self.upconv3 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
-        self.decoder3 = CBR(256, 128)
-
-        self.upconv2 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
-        self.decoder2 = CBR(128, 64)
-
-        self.upconv1 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
-        self.decoder1 = CBR(64, 32)
-
-        self.conv_last = nn.Conv2d(32, class_num, kernel_size=1)
+        super(Your_Net, self).__init__()
 
     def forward(self, x):
-        enc1 = self.encoder1(x)
-        enc2 = self.encoder2(self.pool(enc1))
-        enc3 = self.encoder3(self.pool(enc2))
-        enc4 = self.encoder4(self.pool(enc3))
-
-        bottleneck = self.bottleneck(self.pool(enc4))
-
-        dec4 = self.upconv4(bottleneck)
-        dec4 = torch.cat((dec4, enc4), dim=1)
-        dec4 = self.decoder4(dec4)
-
-        dec3 = self.upconv3(dec4)
-        dec3 = torch.cat((dec3, enc3), dim=1)
-        dec3 = self.decoder3(dec3)
-
-        dec2 = self.upconv2(dec3)
-        dec2 = torch.cat((dec2, enc2), dim=1)
-        dec2 = self.decoder2(dec2)
-
-        dec1 = self.upconv1(dec2)
-        dec1 = torch.cat((dec1, enc1), dim=1)
-        dec1 = self.decoder1(dec1)
-
-        return self.conv_last(dec1)
+        pass
 
 
 transform = transforms.Compose([
@@ -169,22 +113,20 @@ target_size = (512, 512)
 
 train_data = CustomDataset(dataset_folder_path, 'train', loading_mode, target_size, transform)
 val_data = CustomDataset(dataset_folder_path, 'val',loading_mode, target_size, transform)
-test_data = CustomDataset(dataset_folder_path, 'test',loading_mode, target_size, transform)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
 
 class_num = 16
-model = UNet(class_num).to(device)
+model = Your_Net(class_num).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.01)
 is_StepLR = False
 scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
 
 batch_size = 4
-train_loader = DataLoader(train_data, batch_size, shuffle=False)
-val_loader = DataLoader(val_data, batch_size, shuffle=False)
-test_loader = DataLoader(test_data, batch_size, shuffle=False)
+train_loader = DataLoader(train_data, batch_size, shuffle=False,drop_last=True)
+val_loader = DataLoader(val_data, batch_size, shuffle=False,drop_last=True)
 
 epochs = 50
 x = np.arange(0, epochs, 1)
@@ -192,8 +134,8 @@ y_training_loss = np.array([0]*epochs, dtype=float)
 y_val_loss = np.array([0]*epochs, dtype=float)
 y_avg_miou = np.array([0]*epochs, dtype=float)
 
-is_early_stopping = True
-best_avg_miou = float('inf')
+is_early_stopping = False
+previous_avg_miou = 0
 early_stopping_patience = 10
 no_improvement_epochs = 0
 
@@ -243,8 +185,8 @@ try:
             scheduler.step()
 
         if is_early_stopping is True:
-            if miou_avg < best_avg_miou:
-                best_avg_miou = miou_avg
+            if miou_avg > previous_avg_miou:
+                previous_avg_miou = miou_avg
                 no_improvement_epochs = 0
                 torch.save(model, f"{dataset_folder_path}/best_model.pth")
             else:
@@ -259,10 +201,11 @@ try:
 except:
     print("Catch exception. Cleaning up...")
 finally:
+    torch.save(model, f"{dataset_folder_path}/final_model.pth")
     if device.type == 'cuda':
         torch.cuda.empty_cache()
     del model, criterion, optimizer
-    del train_loader, val_loader, test_loader
+    del train_loader, val_loader
     gc.collect()
     print("Cleanup complete. Exiting...")
 
@@ -279,7 +222,8 @@ plt.title("Average mIou")
 plt.show()
 
 try:
-    test_loader = DataLoader(test_data, batch_size, shuffle=False)
+    test_data = CustomDataset(dataset_folder_path, 'test',loading_mode, target_size, transform)
+    test_loader = DataLoader(test_data, batch_size, shuffle=False,drop_last=True)
     model = torch.load(f"{dataset_folder_path}/best_model.pth")
     model.eval()
     ious_sum = [0.0]*class_num
