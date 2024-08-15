@@ -16,7 +16,9 @@ import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
+from torchvision import models
 from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
 
@@ -186,8 +188,8 @@ class Trainer():
         plt.legend(loc='best')
         plt.subplot(1, 2, 2)
         plt.plot(mIoU, color='green', label='mIou')
-        plt.legend(loc='best')
         plt.title("Mean Iou")
+        plt.legend(loc='best')
         plt.show()
         
     def start_testing(self):
@@ -222,82 +224,138 @@ class Trainer():
             scripted_model.save(f"{model_save_path}/best_model.pt")
         
 
-class UNet(nn.Module):
-    def __init__(self,class_num):
-        super(UNet, self).__init__()
-        def CBR(in_channels, out_channels):
-            return nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-                nn.BatchNorm2d(out_channels),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-                nn.BatchNorm2d(out_channels),
-                nn.ReLU(inplace=True)
-            )
-
-        self.encoder1 = CBR(3, 32)
-        self.encoder2 = CBR(32, 64)
-        self.dropout2=nn.Dropout2d(0.1)
-        self.encoder3 = CBR(64, 128)
-        self.dropout3=nn.Dropout2d(0.2)
-        self.encoder4 = CBR(128, 256)
-        self.dropout4=nn.Dropout2d(0.3)
-
-        self.pool = nn.MaxPool2d(2)
-
-        self.bottleneck = CBR(256, 512)
-        self.dropout5=nn.Dropout2d(0.5)
-
-        self.upconv4 = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
-        self.decoder4 = CBR(512, 256)
-        self.dropout6=nn.Dropout2d(0.3)
-
-        self.upconv3 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
-        self.decoder3 = CBR(256, 128)
-        self.dropout7=nn.Dropout2d(0.2)
-
-        self.upconv2 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
-        self.decoder2 = CBR(128, 64)
-        self.dropout8=nn.Dropout2d(0.1)
-
-        self.upconv1 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
-        self.decoder1 = CBR(64, 32)
-
-        self.conv_last = nn.Conv2d(32, class_num, kernel_size=1)
-        self.softmax = nn.Softmax(dim=1)
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
+        super(ConvBlock, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        enc1 = self.encoder1(x)
-        enc2 = self.dropout2(self.encoder2(self.pool(enc1)))
-        enc3 = self.dropout3(self.encoder3(self.pool(enc2)))
-        enc4 = self.dropout4(self.encoder4(self.pool(enc3)))
+        return self.relu(self.bn(self.conv(x)))
 
-        bottleneck = self.dropout5(self.bottleneck(self.pool(enc4)))
 
-        dec4 = self.upconv4(bottleneck)
-        dec4 = torch.cat((dec4, enc4), dim=1)
-        dec4 = self.dropout6(self.decoder4(dec4))
+class SpatialPath(nn.Module):
+    def __init__(self):
+        super(SpatialPath, self).__init__()
+        self.conv1 = ConvBlock(in_channels=3, out_channels=64, kernel_size=7, stride=2, padding=3)
+        self.conv2 = ConvBlock(in_channels=64, out_channels=128, kernel_size=3, stride=2, padding=1)
+        self.conv3 = ConvBlock(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=1)
+        self.dropout1=nn.Dropout2d(0.1)
+        self.dropout2=nn.Dropout2d(0.2)
+        self.dropout3=nn.Dropout2d(0.3)
+    def forward(self, x):
+        x=self.conv1(x)
+        x=self.dropout1(x)
+        x=self.conv2(x)
+        x=self.dropout2(x)
+        x=self.conv3(x)
+        x=self.dropout3(x)
+        return x
 
-        dec3 = self.upconv3(dec4)
-        dec3 = torch.cat((dec3, enc3), dim=1)
-        dec3 = self.dropout7(self.decoder3(dec3))
 
-        dec2 = self.upconv2(dec3)
-        dec2 = torch.cat((dec2, enc2), dim=1)
-        dec2 = self.dropout8(self.decoder2(dec2))
+class AttentionRefinementModule(nn.Module):
+    def __init__(self, in_channels,out_channels):
+        super(AttentionRefinementModule, self).__init__()
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.conv = nn.Conv2d(in_channels, out_channels, 1, 1, 0)
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.sigmoid = nn.Sigmoid()
 
-        dec1 = self.upconv1(dec2)
-        dec1 = torch.cat((dec1, enc1), dim=1)
-        dec1 = self.decoder1(dec1)
+    def forward(self, x):
+        avg=self.global_pool(x)
+        avg=self.conv(avg)
+        avg=self.bn(avg)
+        attention = self.sigmoid(avg)
+        x=self.conv(x)
+        x=self.bn(x)
+        x=self.relu(x)
+        return x * attention
+
+
+class ContextPath(nn.Module):
+    def __init__(self):
+        super(ContextPath, self).__init__()
+        self.resnet18 = models.resnet18(pretrained=True)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.arm8x = AttentionRefinementModule(128,512)
+        self.arm16x = AttentionRefinementModule(256,256)
+        self.conv1=ConvBlock(in_channels=256, out_channels=512, kernel_size=3, stride=1, padding=1)
+        self.conv2=ConvBlock(in_channels=512, out_channels=256, kernel_size=3, stride=1, padding=1)
+        self.dropout1=nn.Dropout2d(0.1)
+        self.dropout2=nn.Dropout2d(0.2)
+        self.dropout3=nn.Dropout2d(0.3)
         
-        return self.conv_last(dec1)
+    def forward(self, x):
+        x2 = self.resnet18.conv1(x)
+        x2 = self.resnet18.bn1(x2)
+        x2 = self.resnet18.relu(x2)
+        x4 = self.resnet18.maxpool(x2)
+        x4 = self.resnet18.layer1(x4)
+        x8 = self.resnet18.layer2(x4)  
+        x16 = self.resnet18.layer3(x8)
+        
+        avg=self.avg_pool(x16)
+        avg_up=F.interpolate(avg, size=x16.size()[2:], mode='bilinear', align_corners=True)
+        
+        x16_arm=self.arm16x(x16)
+        x16_arm=x16_arm+avg_up
+        x16_arm_up=F.interpolate(x16_arm, size=x8.size()[2:], mode='bilinear', align_corners=True)
+        x16_arm_up=self.conv1(x16_arm_up)
+        x16_arm_up=self.dropout2(x16_arm_up)
+        
+        x8_arm=self.arm8x(x8)
+        x8_arm=x8_arm+x16_arm_up
+        x8_arm=self.conv2(x8_arm)
+        x8_arm=self.dropout3(x8_arm)
+        
+        return x8_arm,x
 
-trainer=Trainer(UNet,16)
 
-data_set_path="C:/Users/JARVIS/Documents/Projects/CustomWildScenes2d"
+class FeatureFusionModule(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(FeatureFusionModule, self).__init__()
+        self.conv = ConvBlock(in_channels, out_channels, 1, 1, 0)
+        self.dropout=nn.Dropout2d(0.4)
+        self.attention = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(out_channels, out_channels // 4, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels // 4, out_channels, 1, bias=False),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, sp, cp):
+        fusion = torch.cat([sp, cp], dim=1)
+        fusion = self.conv(fusion)
+        fusion=self.dropout(fusion)
+        attention = self.attention(fusion)
+        return fusion + fusion * attention
+
+
+class BiSeNet(nn.Module):
+    def __init__(self, num_classes):
+        super(BiSeNet, self).__init__()
+        self.spatial_path = SpatialPath()
+        self.context_path = ContextPath()
+        self.feature_fusion = FeatureFusionModule(512,128)
+        self.final_conv=nn.Conv2d(128, num_classes, 1,1,0)
+        
+    def forward(self, x):
+        sp = self.spatial_path(x)
+        cp,x = self.context_path(x)
+        out = self.feature_fusion(sp,cp)
+        out = F.interpolate(out, size=x.size()[2:], mode='bilinear', align_corners=True)
+        out = self.final_conv(out)
+        return out
+
+trainer=Trainer(BiSeNet,16)
+
+data_set_path="C:/Users/JARVIS/Documents/Projects/Custom2WildScenes2d"
 trainer.load_image_data(data_set_path, "pre")
 
-trainer.set_training_parameters(0.001,4,3)
+trainer.set_training_parameters(0.001,8,50,0)
 
 model_save_path=data_set_path
 y1,y2,y3=trainer.start_training(model_save_path)
@@ -305,5 +363,3 @@ y1,y2,y3=trainer.start_training(model_save_path)
 trainer.draw_training_result(y1, y2, y3)
 
 trainer.start_testing()
-
-

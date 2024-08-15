@@ -35,16 +35,23 @@ def get_image_path_list(dataset_path,csv_file_name,intrval):
         sampled_image_path_list.append(image_path_list[index])
     return sampled_image_path_list
 
-def copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_image_path_list,folder_name):
+def copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_image_path_list,folder_name,target_size=None):
     for path in sampled_image_path_list:
         src_image_path=Path(f"{dataset_path}/../{path}")
         image_name=src_image_path.name
         dest_image_path=f"{dataset_path}/../{custom_folder_name}/{folder_name}/image/{image_name}"
-        shutil.copy(src_image_path.as_posix(), dest_image_path)
+        #shutil.copy(src_image_path.as_posix(), dest_image_path)
+        image=cv2.imread(src_image_path.as_posix(),cv2.IMREAD_UNCHANGED)
         src_label_path=Path(src_image_path.as_posix().replace("image", "newIndexLabel"))
         label_name=src_label_path.name
         dest_label_path=f"{dataset_path}/../{custom_folder_name}/{folder_name}/newIndexLabel/{label_name}"
-        shutil.copy(src_label_path.as_posix(), dest_label_path)
+        #shutil.copy(src_label_path.as_posix(), dest_label_path)
+        label=cv2.imread(src_label_path.as_posix(),cv2.IMREAD_UNCHANGED)
+        if target_size is not None:
+            image = cv2.resize(image, target_size,interpolation=cv2.INTER_LINEAR)
+            label = cv2.resize(label, target_size,interpolation=cv2.INTER_NEAREST)
+        cv2.imwrite(dest_image_path, image)
+        cv2.imwrite(dest_label_path, label)
 
 def calculate_class_distribution(dataset_path,custom_folder_name,folder_name,class_num):
     new_index_label_folder_path=Path(f"{dataset_path}/../{custom_folder_name}/{folder_name}/newIndexLabel")
@@ -68,14 +75,15 @@ custom_folder_name="CustomWildScenes2d"
 
 init_custom_dataset_folder(dataset_path,custom_folder_name)
 random.seed(0)
-intrval=7
-sampled_train_image_path_list=get_image_path_list(dataset_path,'train',intrval)
-sampled_val_image_path_list=get_image_path_list(dataset_path,'val',intrval)
-sampled_test_image_path_list=get_image_path_list(dataset_path,'test',intrval)
+interval=3
+sampled_train_image_path_list=get_image_path_list(dataset_path,'train',interval)
+sampled_val_image_path_list=get_image_path_list(dataset_path,'val',interval)
+sampled_test_image_path_list=get_image_path_list(dataset_path,'test',interval)
 
-copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_train_image_path_list,'train')
-copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_val_image_path_list,'val')
-copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_test_image_path_list,'test')
+target_size=(512,512)
+copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_train_image_path_list,'train',target_size)
+copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_val_image_path_list,'val',target_size)
+copy_to_custom_dataset_folder(dataset_path,custom_folder_name,sampled_test_image_path_list,'test',target_size)
 
 #Saves paths of smapled images to where you refer to
 np.save(f"{dataset_path}/../{custom_folder_name}/sampled_train_image_path_list.npy",sampled_train_image_path_list)
@@ -100,6 +108,7 @@ if is_show is True:
     plt.subplot(1,3,3)
     plt.plot(x, test_distribution, color='blue', label='test')
     plt.legend(loc='best')
+    plt.title(f"The current sampling is based on the interval of {interval}")
     plt.show()
 
 

@@ -4,59 +4,64 @@ Created on Sun Jul 28 00:09:38 2024
 
 @author: Sen
 """
-
-import gc
 from pathlib import Path
 from tqdm import tqdm
+import concurrent.futures
+from datetime import datetime
+
 import numpy as np
 import cv2
+import matplotlib.pyplot as plt
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
-from torch.optim.lr_scheduler import StepLR
-import matplotlib.pyplot as plt
 
 
 class CustomDataset(Dataset):
-    def __init__(self, dataset_folder_path, csv_file_type, loading_mode, target_size=None, transform=None):
+    def __init__(self, dataset_folder_path, csv_file_type, loading_mode, target_size=None):
         self.dataset_folder_path = dataset_folder_path
         self.csv_file_type = csv_file_type
-        self.sampled_image_path_list = np.load(
-            f"{dataset_folder_path}/sampled_{csv_file_type}_image_path_list.npy")
+        self.sampled_image_path_list = np.load(f"{dataset_folder_path}/sampled_{csv_file_type}_image_path_list.npy")
         self.loading_mode = loading_mode
         self.target_size = target_size
-        self.transform = transform
-        self.image_list = []
-        self.label_list = []
+        self.transform = transforms.ToTensor()
+        self.image_list = [None]*self.__len__()
+        self.label_list = [None]*self.__len__()
         if self.loading_mode == 'pre':
-            self.pre_load_and_process()
-        elif self.loading_mode == 'real':
-            pass
-        else:
-            raise Exception(
-                "You must assign the value of loading_mode,'pre' or 'real'")
+            self.__pre_load_and_process__()
 
-    def process(self, image_name):
+    def __process_image__(self, image,label):
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if self.target_size is not None:
+            image = cv2.resize(image, self.target_size,interpolation=cv2.INTER_LINEAR)
+            label = cv2.resize(label, self.target_size,interpolation=cv2.INTER_NEAREST)
+        return image,label
+
+    def __load_image__(self, image_name):
         image_path = f"{self.dataset_folder_path}/{self.csv_file_type}/image/{image_name}"
         image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         label_name = image_name
         label_path = f"{self.dataset_folder_path}/{self.csv_file_type}/newIndexLabel/{image_name}"
         label = cv2.imread(label_path, cv2.IMREAD_UNCHANGED)
-        if self.target_size is not None:
-            image = cv2.resize(image, self.target_size,interpolation=cv2.INTER_NEAREST)
-            label = cv2.resize(label, self.target_size,interpolation=cv2.INTER_NEAREST)
-        return image, label
+        return self.__process_image__(image,label)
 
-    def pre_load_and_process(self):
+    def __load_image_and_index__(self,args):
+        index,image_name=args
+        image,label=self.__load_image__(image_name)
+        return index,image,label
+
+    def __pre_load_and_process__(self):
         print(f"Start loading {self.csv_file_type} data")
-        for i in self.sampled_image_path_list:
-            image_name = Path(i).name
-            image, label = self.process(image_name)
-            self.image_list.append(image)
-            self.label_list.append(label)
+        args_list=[(index,Path(image_path).name) for index,image_path in enumerate(self.sampled_image_path_list)]
+        results=None
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = list(executor.map(self.__load_image_and_index__, args_list))
+        for index,image,label in results:
+            self.image_list[index]=image
+            self.label_list[index]=label
         print(f"Loading {self.csv_file_type} data has been completed")
 
     def __len__(self):
@@ -70,187 +75,159 @@ class CustomDataset(Dataset):
             label = self.label_list[idx]
         if self.loading_mode == 'real':
             image_name = Path(self.sampled_image_path_list[idx]).name
-            image, label = self.process(image_name)
-        if self.transform is not None:
-            image = self.transform(image)
-        label = torch.tensor(label, dtype=torch.long)
-        return image, label
+            image, label = self.__load_image__(image_name)
+        tensor_image = self.transform(image)
+        tensor_label = torch.from_numpy(label).long()
+        return tensor_image, tensor_label
 
 
-def calculate_IoU(pred_label, label, class_index):
-    mask_pred_label = (pred_label == class_index)
-    mask_label = (label == class_index)
-    intersection = (mask_pred_label & mask_label).sum()
-    union = (mask_pred_label | mask_label).sum()
-    iou = intersection/union if union > 0 else 0
-    return iou
-
-
-def calculate_mIoU(pred_label, label, class_num):
-    ious = []
-    for index in range(class_num):
-        iou = calculate_IoU(pred_label, label, index)
-        ious.append(iou)
-    return np.mean(np.array(ious)), ious
-
-# Define your Network here
-class Your_Net(nn.Module):
-    def __init__(self, class_num):
-        super(Your_Net, self).__init__()
-
-    def forward(self, x):
-        pass
-
-
-transform = transforms.Compose([
-    transforms.ToTensor()
-])
-
-dataset_folder_path = "C:/Users/JARVIS/Documents/Projects/CustomWildScenes2d"
-
-loading_mode = 'pre'
-target_size = (512, 512)
-
-train_data = CustomDataset(dataset_folder_path, 'train', loading_mode, target_size, transform)
-val_data = CustomDataset(dataset_folder_path, 'val',loading_mode, target_size, transform)
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(device)
-
-class_num = 16
-model = Your_Net(class_num).to(device)
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.01)
-is_StepLR = False
-scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
-
-batch_size = 4
-train_loader = DataLoader(train_data, batch_size, shuffle=False,drop_last=True)
-val_loader = DataLoader(val_data, batch_size, shuffle=False,drop_last=True)
-
-epochs = 50
-x = np.arange(0, epochs, 1)
-y_training_loss = np.array([0]*epochs, dtype=float)
-y_val_loss = np.array([0]*epochs, dtype=float)
-y_avg_miou = np.array([0]*epochs, dtype=float)
-
-is_early_stopping = False
-previous_avg_miou = 0
-early_stopping_patience = 10
-no_improvement_epochs = 0
-
-try:
-    for epoch in range(epochs):
-        message = f"Current epoch:{epoch+1}/{epochs} Training:"
-        model.train()
-        training_loss_sum = 0.0
-        for images, labels in tqdm(train_loader, desc=message, leave=False):
-            images = images.to(device)
-            labels = labels.to(device).long()
-            optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            training_loss_sum += loss.item()
-        training_loss_avg = training_loss_sum / len(train_loader)
-        y_training_loss[epoch] = training_loss_avg
-
-        message = f"Current epoch:{epoch+1}/{epochs} validating:"
-        model.eval()
-        val_loss_sum = 0.0
-        miou_sum = 0.0
-        with torch.no_grad():
-            for images, labels in tqdm(val_loader, desc=message, leave=False):
-                images = images.to(device)
-                labels = labels.to(device).long()
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-                val_loss_sum += loss.item()
-                pred_labels = torch.argmax(outputs, dim=1)
-                pred_labels_np = pred_labels.cpu().numpy()
-                labels_np = labels.cpu().numpy()
-                batch_miou_sum = 0.0
-                for (pred_label, label) in zip(pred_labels_np, labels_np):
-                    miou, _ = calculate_mIoU(pred_label, label, class_num)
-                    batch_miou_sum += miou
-                miou_sum += (batch_miou_sum/pred_labels.shape[0])
-        val_loss = val_loss_sum/len(val_loader)
-        y_val_loss[epoch] = val_loss
-        miou_avg = miou_sum/len(val_loader)
-        y_avg_miou[epoch] = miou_avg
-        print(f"Epoch:{epoch+1}/{epochs} Training loss: {training_loss_avg:.4f} Validation loss: {val_loss:.4f} Validation average mIou: {miou_avg:.4f}")
-
-        if is_StepLR is True:
-            scheduler.step()
-
-        if is_early_stopping is True:
-            if miou_avg > previous_avg_miou:
-                previous_avg_miou = miou_avg
-                no_improvement_epochs = 0
-                torch.save(model, f"{dataset_folder_path}/best_model.pth")
-            else:
-                no_improvement_epochs += 1
-            if no_improvement_epochs >= early_stopping_patience:
-                print("Early stopping triggered")
-                y_training_loss = y_training_loss[0:epoch]
-                y_val_loss = y_val_loss[0:epoch]
-                y_avg_miou = y_avg_miou[0:epoch]
-                raise KeyboardInterrupt
-
-except:
-    print("Catch exception. Cleaning up...")
-finally:
-    torch.save(model, f"{dataset_folder_path}/final_model.pth")
-    if device.type == 'cuda':
-        torch.cuda.empty_cache()
-    del model, criterion, optimizer
-    del train_loader, val_loader
-    gc.collect()
-    print("Cleanup complete. Exiting...")
-
-fig = plt.figure(figsize=(10, 5))
-plt.subplot(1, 2, 1)
-plt.plot(y_training_loss, color='blue', label='Traning loss')
-plt.plot(y_val_loss, color='orange', label='Validation loss')
-plt.title("Loss")
-plt.legend(loc='best')
-plt.subplot(1, 2, 2)
-plt.plot(y_avg_miou, color='green', label='Average mIou')
-plt.legend(loc='best')
-plt.title("Average mIou")
-plt.show()
-
-try:
-    test_data = CustomDataset(dataset_folder_path, 'test',loading_mode, target_size, transform)
-    test_loader = DataLoader(test_data, batch_size, shuffle=False,drop_last=True)
-    model = torch.load(f"{dataset_folder_path}/best_model.pth")
-    model.eval()
-    ious_sum = [0.0]*class_num
-    miou_sum = 0.0
-    with torch.no_grad():
-        for images, labels in tqdm(test_loader, desc=message, leave=False):
-            images = images.to(device)
-            labels = labels.to(device).long()
+class Trainer():
+    def __init__(self,classifier,class_num,is_printing_model=False):
+        self.device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Current used device is {self.device}")
+        self.class_num=class_num
+        self.model=classifier(class_num)
+        if is_printing_model is True:
+            print("Model Information:")
+            print(self.model)
+        self.device_model=self.model.to(self.device)
+        self.train_data=None
+        self.val_data=None
+        self.test_data=None
+        self.learning_rate=None
+        self.batch_size=None
+        self.epochs=None
+        self.ignore_index=None
+        
+    def __update_iou__(self,preds, labels, total_intersection,total_union):
+        for pred, label in zip(preds, labels):
+            for index in range(self.class_num):
+                pred_inds = (pred == index)
+                label_inds = (label == index)
+                intersection = (pred_inds & label_inds).sum().item()
+                union = (pred_inds | label_inds).sum().item()
+                total_intersection[index] += intersection
+                total_union[index] += union
+        return total_intersection,total_union
+        
+    def load_image_data(self,dataset_folder_path,loading_mode,target_size=None):
+        self.train_data = CustomDataset(dataset_folder_path, 'train', loading_mode, target_size)
+        self.val_data = CustomDataset(dataset_folder_path, 'val',loading_mode, target_size)
+        self.test_data = CustomDataset(dataset_folder_path, 'test',loading_mode, target_size)
     
-            outputs = model(images)
-            probs = torch.softmax(outputs, dim=1)
-            preds = torch.argmax(probs, dim=1)
-            preds_np = preds.cpu().numpy()
-            labels_np = labels.cpu().numpy()
-            for (pred_label, label) in zip(preds_np, labels_np):
-                miou, ious = calculate_mIoU(pred_label, label, class_num)
-                miou_sum += miou
-                ious_sum=np.add(ious_sum,ious).tolist()
-    avg_miou=miou_sum/test_data.__len__()
-    avg_ious=(np.array(ious_sum)/test_data.__len__()).tolist()
-    print(f"Average mIou of {test_data.__len__()} test images:{avg_miou}")
-    print(f"Average Iou of {test_data.__len__()} test images:{avg_ious}")
-except:
-    print("Catch exception. Cleaning up...")
-finally:
-    if device.type == 'cuda':
+    def set_training_parameters(self,learning_rate=0.01,batch_size=16,epochs=50,ignore_index=-100):
+        self.learning_rate=learning_rate
+        self.batch_size=batch_size
+        self.epochs=epochs
+        self.ignore_index=ignore_index
+
+    def start_training(self,model_save_path):
+        y_training_loss = np.array([0]*self.epochs, dtype=float)
+        y_val_loss = np.array([0]*self.epochs, dtype=float)
+        y_miou = np.array([0]*self.epochs, dtype=float)
+        criterion = nn.CrossEntropyLoss(ignore_index=self.ignore_index)
+        optimizer = optim.Adam(self.device_model.parameters(), lr=self.learning_rate)
+        train_loader = DataLoader(self.train_data, self.batch_size, shuffle=False,drop_last=True)
+        val_loader = DataLoader(self.val_data, self.batch_size, shuffle=False,drop_last=True)
         torch.cuda.empty_cache()
-    del model,test_loader
-    gc.collect()
-    print("Cleanup complete. Exiting...")
+        for epoch in range(self.epochs):
+            message = f"Current epoch:{epoch+1}/{self.epochs} Training"
+            self.device_model.train()
+            batch_training_loss_sum = 0.0
+            for images, labels in tqdm(train_loader, desc=message, leave=False):
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+                optimizer.zero_grad()
+                outputs = self.device_model(images)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                batch_training_loss_sum += loss.item()
+            avg_training_loss = batch_training_loss_sum / len(train_loader)
+            y_training_loss[epoch] = avg_training_loss
+
+            message = f"Current epoch:{epoch+1}/{self.epochs} validating"
+            self.device_model.eval()
+            batch_val_loss_sum = 0.0
+            mIoU=0.0
+            total_intersection = np.array([0]*self.class_num,dtype=float)
+            total_union = np.array([0]*self.class_num,dtype=float)
+            with torch.no_grad():
+                for images, labels in tqdm(val_loader, desc=message, leave=False):
+                    images = images.to(self.device)
+                    labels = labels.to(self.device)
+                    outputs = self.device_model(images)
+                    loss = criterion(outputs, labels)
+                    batch_val_loss_sum += loss.item()
+                    pred_labels = torch.argmax(outputs, dim=1)
+                    pred_labels_np = pred_labels.cpu().numpy()
+                    labels_np = labels.cpu().numpy()
+                    total_intersection,total_union=self.__update_iou__(pred_labels_np,labels_np,total_intersection,total_union)
+            iou=total_intersection[1:]/(total_union+1e-6)[1:]
+            mIoU=iou.mean().item()
+            avg_val_loss = batch_val_loss_sum/len(val_loader)
+            y_val_loss[epoch] = avg_val_loss
+            y_miou[epoch]=mIoU
+            print(f"Epoch:{epoch+1}/{self.epochs} Training loss: {avg_training_loss:.4f} Validation loss: {avg_val_loss:.4f} mIoU of Validation: {mIoU:.4f}")
+        self.save_current_model(model_save_path)
+        return y_training_loss,y_val_loss,y_miou
+    
+    def draw_training_result(self,train_loss,val_loss,mIoU):
+        plt.figure(figsize=(10, 5))
+        plt.subplot(1, 2, 1)
+        plt.plot(train_loss, color='blue', label='Traning loss')
+        plt.plot(val_loss, color='orange', label='Validation loss')
+        plt.title("Loss")
+        plt.legend(loc='best')
+        plt.subplot(1, 2, 2)
+        plt.plot(mIoU, color='green', label='mIou')
+        plt.legend(loc='best')
+        plt.title("Mean Iou")
+        plt.show()
+        
+    def start_testing(self):
+        torch.cuda.empty_cache()
+        test_loader = DataLoader(self.test_data, self.batch_size, shuffle=False,drop_last=True)
+        self.device_model.eval()
+        mIoU=0.0
+        total_intersection = np.array([0]*self.class_num,dtype=float)
+        total_union = np.array([0]*self.class_num,dtype=float)
+        with torch.no_grad():
+            message = "Test"
+            for images, labels in tqdm(test_loader, desc=message, leave=False):
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+                outputs = self.device_model(images)
+                probs = torch.softmax(outputs, dim=1)
+                preds = torch.argmax(probs, dim=1)
+                preds_np = preds.cpu().numpy()
+                labels_np = labels.cpu().numpy()
+                total_intersection,total_union=self.__update_iou__(preds_np,labels_np,total_intersection,total_union)
+        iou=total_intersection[1:]/(total_union+1e-6)[1:]
+        mIoU=iou.mean().item()
+        print(f"mIoU of test set:{mIoU}")
+    
+    def save_current_model(self,model_save_path):
+        timestamp = datetime.now()
+        timestamp_str = timestamp.strftime('%Y-%m-%d-%H-%M-%S')
+        scripted_model = torch.jit.script(self.device_model)
+        scripted_model.save(f"{model_save_path}/{timestamp_str}_{YourNet.__name__}_model.pt")
+
+
+class YourNet(nn.Module):
+    def __init__(self):
+        super(YourNet, self).__init__()
+
+trainer=Trainer(YourNet,16)
+
+data_set_path=""
+trainer.load_image_data(data_set_path, "pre",(512,512))
+
+trainer.set_training_parameters(0.01,12,50,0)
+
+model_save_path=data_set_path
+y1,y2,y3=trainer.start_training(model_save_path)
+
+trainer.draw_training_result(y1, y2, y3)
+
+trainer.start_testing()
